@@ -1,0 +1,2008 @@
+<!doctype html>
+<html lang="en">
+  <!--
+  Electric Field Mapper — Physics 122, Lab 3
+
+  9/13/2026
+  
+  Steve Rubin, ser@ieee.org
+
+  This file is the complete offline application. Open it directly in a browser.
+  There are no external scripts, stylesheets, fonts, or build dependencies.
+
+  File layout:
+    1. Styles and accessible page controls
+    2. Physics module: geometry, grid, and numerical solver
+    3. Application: editor state, rendering, input handlers, and PNG export
+
+  Geometry uses centimeters with the origin at the bottom-left of the sheet.
+  Potential is in volts; electric-field strength is in volts per centimeter.
+  Run the companion regression tests with: node field-mapper.test.cjs
+-->
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Electric Field Mapper</title>
+    <style>
+      /* Theme tokens are shared by the controls; the drawing sheet stays paper-colored. */
+      :root {
+        color-scheme: light dark;
+        --bg: #f1f0e9;
+        --panel: #faf9f5;
+        --ink: #25382f;
+        --muted: #65736a;
+        --line: #d9ddd4;
+        --accent: #275f47;
+        --soft: #e5ece3;
+        --orange: #e8720c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button,
+      select,
+      input[type="number"] {
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel);
+        color: var(--ink);
+        padding: 8px 10px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: var(--accent);
+        background: var(--soft);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      button.active,
+      button.primary {
+        background: var(--accent);
+        color: white;
+        border-color: var(--accent);
+      }
+      :focus-visible {
+        outline: 3px solid #df902e;
+        outline-offset: 3px;
+      }
+      header {
+        max-width: 1500px;
+        margin: auto;
+        padding: 25px 32px 21px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand {
+        font-size: 22px;
+        font-weight: 750;
+        letter-spacing: -1px;
+      }
+      .brand span {
+        color: var(--orange);
+      }
+      .eyebrow {
+        font-size: 10px;
+        letter-spacing: 2px;
+        font-weight: 750;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .headright {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .badge {
+        border: 1px solid var(--line);
+        border-radius: 99px;
+        padding: 5px 10px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      main {
+        max-width: 1500px;
+        margin: auto;
+        padding: 26px 32px;
+        display: grid;
+        grid-template-columns: 268px minmax(0, 1fr);
+        gap: 28px;
+      }
+      aside {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+      h1 {
+        font:
+          normal 32px/1.18 Georgia,
+          serif;
+        margin: 8px 0 10px;
+        letter-spacing: -0.6px;
+      }
+      h2 {
+        font-size: 12px;
+        margin: 0 0 12px;
+        text-transform: uppercase;
+        letter-spacing: 1.1px;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 12px;
+        margin: 0;
+      }
+      .modes {
+        display: flex;
+        background: var(--soft);
+        padding: 4px;
+        border-radius: 9px;
+        gap: 4px;
+      }
+      .modes button {
+        flex: 1;
+        border: 0;
+      }
+      .preset {
+        display: block;
+        text-align: left;
+        width: 100%;
+        margin: 6px 0;
+        padding: 11px 12px;
+        line-height: 1.35;
+      }
+      .preset small {
+        display: block;
+        font-size: 10px;
+        opacity: 0.65;
+        margin-top: 3px;
+      }
+      .preset .num {
+        font-family: monospace;
+        opacity: 0.6;
+        margin-right: 9px;
+      }
+      .section {
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin: 8px 0;
+      }
+      .row > * {
+        min-width: 0;
+      }
+      .row select {
+        flex: 1;
+      }
+      label.check {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin: 10px 0;
+        cursor: pointer;
+      }
+      input[type="checkbox"] {
+        accent-color: var(--accent);
+        width: 15px;
+        height: 15px;
+      }
+      .key {
+        display: inline-block;
+        width: 17px;
+        border-top: 2px solid #202820;
+      }
+      .key.orange {
+        border-color: var(--orange);
+      }
+      .tools {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+      .tools button {
+        font-size: 12px;
+      }
+      .wide {
+        width: 100%;
+      }
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+        margin: 10px 0;
+      }
+      .inspector {
+        padding: 12px;
+        background: var(--soft);
+        border-radius: 8px;
+      }
+      .inspector input,
+      .inspector select {
+        width: 100%;
+      }
+      .inspector label {
+        display: block;
+        font-size: 11px;
+        margin: 7px 0;
+      }
+      .worktop {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        margin-bottom: 18px;
+        gap: 12px;
+      }
+      .worktop p {
+        max-width: 660px;
+      }
+      .sheet {
+        position: relative;
+        border: 1px solid #c7cec3;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #fbfaf4;
+        box-shadow: 0 8px 30px #233d2610;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: auto;
+        touch-action: none;
+        cursor: crosshair;
+      }
+      .sheetfoot {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 16px;
+        background: var(--panel);
+        border-top: 1px solid var(--line);
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .probe {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        margin-top: 16px;
+        padding: 17px 20px;
+        gap: 15px;
+      }
+      .probe strong {
+        font-family: ui-monospace, monospace;
+        font-size: 23px;
+        display: block;
+        margin-top: 3px;
+        font-weight: 500;
+      }
+      .probe small {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .note {
+        margin-top: 16px;
+        padding: 15px 18px;
+        border-left: 3px solid var(--accent);
+        background: var(--soft);
+        font-size: 12px;
+      }
+      .note b {
+        display: block;
+        margin-bottom: 4px;
+      }
+      details {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 18px;
+      }
+      summary {
+        cursor: pointer;
+      }
+      .editor[hidden],
+      [hidden] {
+        display: none !important;
+      }
+      .status {
+        font-family: monospace;
+        font-size: 11px;
+      }
+      .legend {
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 14px;
+      }
+      .legend span {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      #message {
+        color: var(--muted);
+        font-size: 12px;
+        min-height: 18px;
+        margin: 8px 0;
+      }
+      footer {
+        max-width: 1500px;
+        margin: auto;
+        padding: 0 32px 20px;
+        color: var(--muted);
+        font-size: 10px;
+        letter-spacing: 0.5px;
+      } /* Follow the system theme without changing the scientific plot colors. */
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #17251f;
+          --panel: #203028;
+          --ink: #e0e8de;
+          --muted: #a3b3a5;
+          --line: #3a4c40;
+          --accent: #367755;
+          --soft: #293d30;
+        }
+        .sheet {
+          border-color: #50614e;
+        }
+        .badge {
+          color: var(--muted);
+        }
+      } /* Stack the controls above the sheet on smaller screens. */
+      @media (max-width: 850px) {
+        main {
+          grid-template-columns: 1fr;
+          padding: 18px;
+          gap: 20px;
+        }
+        header {
+          padding: 18px;
+        }
+        aside {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 16px;
+        }
+        .section {
+          padding-top: 12px;
+        }
+        h1 {
+          font-size: 26px;
+        }
+        .headright .badge {
+          display: none;
+        }
+        .probe {
+          padding: 12px;
+        }
+        .probe strong {
+          font-size: 18px;
+        }
+      }
+      @media (max-width: 480px) {
+        aside {
+          display: flex;
+        }
+        .worktop {
+          align-items: flex-start;
+        }
+        .sheetfoot {
+          font-size: 9px;
+        }
+        .probe {
+          gap: 5px;
+        }
+        .probe strong {
+          font-size: 15px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        Electric Field Mapper
+        <span class="eyebrow" style="margin-left: 14px; color: var(--muted)"
+          >Physics 122 / Lab 03</span
+        >
+      </div>
+      <div class="headright">
+        <span class="badge">2D electrostatics · offline</span
+        ><button id="export">Export PNG ↗</button>
+      </div>
+    </header>
+    <main>
+      <!-- Preset selection, drawing tools, object properties, and layer controls. -->
+      <aside>
+        <div>
+          <div class="modes">
+            <button id="presetMode" class="active">Presets</button
+            ><button id="designMode">Your Design</button>
+          </div>
+          <p class="hint">Explore the lab patterns, or draw a field of your own.</p>
+          <div id="presets"></div>
+          <button id="editPreset" class="wide">Edit this arrangement →</button>
+        </div>
+
+        <!-- The inspector is populated from the selected geometry object in JavaScript. -->
+        <div class="editor" hidden>
+          <h2>Draw on the sheet</h2>
+          <div class="tools" id="tools"></div>
+          <p class="hint" id="toolHint"></p>
+          <button id="finish" class="wide" hidden>Finish polyline ↵</button>
+          <div class="row">
+            <button id="undo">Undo</button><button id="clear">Clear all</button>
+          </div>
+          <label class="sub" for="objects">Objects · select to edit</label
+          ><select id="objects" class="wide"></select>
+          <div id="inspector" class="inspector" hidden>
+            <strong id="selectionTitle">Selected object</strong>
+            <p class="hint">Drag to move · square handles resize · Delete removes</p>
+            <label id="voltageLabel"
+              >Voltage (V)<input
+                id="voltage"
+                type="number"
+                min="-100"
+                max="100"
+                step="0.1" /></label
+            ><label id="floatLabel" class="check"
+              ><input id="floating" type="checkbox" />Floating · zero net charge</label
+            ><label id="epsilonLabel"
+              >Relative permittivity εᵣ<input
+                id="epsilon"
+                type="number"
+                min="0.1"
+                max="100"
+                step="0.1"
+            /></label>
+            <div class="row">
+              <label
+                >Center x (cm)<input id="objX" type="number" min="0" max="22" step="0.1" /></label
+              ><label
+                >Center y (cm)<input id="objY" type="number" min="0" max="17" step="0.1"
+              /></label>
+            </div>
+            <label id="radiusLabel"
+              >Radius (cm)<input id="radius" type="number" min="0.2" max="5" step="0.1"
+            /></label>
+            <div id="vertices"></div>
+            <button id="addVertex" class="wide" hidden>Add polyline vertex</button
+            ><button id="delete" class="wide">Delete object</button>
+          </div>
+        </div>
+        <div class="section">
+          <h2>Map layers</h2>
+          <label class="check"
+            ><input id="contours" type="checkbox" checked /><span class="key"></span>
+            Equipotentials</label
+          ><label class="check"
+            ><input id="streams" type="checkbox" checked /><span class="key orange"></span> Electric
+            field</label
+          ><label class="check"><input id="heat" type="checkbox" /> Field strength heatmap</label
+          ><label class="check"
+            ><input id="labels" type="checkbox" checked /> Electrode labels</label
+          >
+        </div>
+        <div class="section">
+          <h2>Equipotential levels</h2>
+          <select id="levelMode" class="wide" aria-label="Equipotential level mode">
+            <option value="measured">As measured in lab</option>
+            <option value="even">Evenly spaced</option>
+            <option value="custom">Custom count</option></select
+          ><label id="countLabel" class="row" hidden
+            >Interior lines
+            <input id="count" type="number" min="1" max="25" value="9" style="width: 65px"
+          /></label>
+          <p class="hint" id="levelsText"></p>
+        </div>
+      </aside>
+      <section>
+        <div class="worktop">
+          <div>
+            <div class="eyebrow">An interactive field notebook</div>
+            <h1 id="title"></h1>
+            <p class="sub" id="description"></p>
+          </div>
+          <span class="badge" id="modeBadge">Pattern 01 / 05</span>
+        </div>
+
+        <!-- The fixed canvas resolution is independent of its responsive CSS display size. -->
+        <div class="sheet">
+          <canvas
+            id="map"
+            width="1100"
+            height="850"
+            tabindex="0"
+            aria-label="Electric field map. Use arrow keys to move the voltage probe. In the editor, select objects using the object list and edit their numerical properties."
+          ></canvas>
+          <div class="sheetfoot">
+            <span>22 × 17 cm · insulated sheet edges</span
+            ><span id="status" class="status" role="status">Solving…</span>
+          </div>
+        </div>
+        <div class="legend">
+          <span><i class="key"></i> Constant potential</span
+          ><span><i class="key orange"></i> E points from higher to lower V</span>
+        </div>
+
+        <!-- Live measurements are separate from the canvas for readable, accessible text. -->
+        <div class="probe">
+          <div>
+            <div class="eyebrow">Live probe</div>
+            <strong id="probeV">— V</strong
+            ><small id="probePosition">Hover or use arrow keys on the sheet</small>
+          </div>
+          <div>
+            <div class="eyebrow">Field strength</div>
+            <strong id="probeE">— V/cm</strong><small id="probeMaterial">Potential gradient</small>
+          </div>
+          <div>
+            <div class="eyebrow">Gap midpoint</div>
+            <strong id="midpoint">— V</strong><small id="midLabel">Reference location</small>
+          </div>
+        </div>
+        <div id="message" role="status"></div>
+        <div class="note"><b id="noteTitle"></b><span id="note"></span></div>
+        <details>
+          <summary>About this model & how to use it</summary>
+          <p>
+            Fixed-voltage conductors obey Dirichlet conditions. The outer sheet edge has zero normal
+            flux (Neumann). We solve ∇·(ε∇V) = 0 on a 221 × 171 grid using red-black successive
+            over-relaxation and arithmetic face-averaged permittivity. Floating conductors are
+            equipotentials constrained to zero total interface flux. E = −∇V, in V/cm. Orange paths
+            use fourth-order Runge–Kutta integration. Finite grid resolution rounds sharp edges.
+          </p>
+          <p>
+            Insulators here model real dielectrics: the field passes through them. The bench
+            voltmeter needs mobile surface charge, so its zero reading on an insulator is not a
+            field measurement. A nonconducting hole in a resistive sheet also differs from a
+            dielectric.
+          </p>
+          <p>
+            Click an existing object in any preset to edit it directly. Drag its body to move it, or
+            a square handle to resize it. Change its properties in the selected-object panel;
+            Delete/Backspace or Delete object removes it. New objects switch to Select automatically
+            after placement. Editor: drag a plate, terminal, or insulator onto the sheet. Click
+            vertices for a polyline, then press Enter or Finish. Select and drag objects to move
+            them; drag the square handles to reshape. Escape cancels a drawing. Use the object list
+            and numerical controls for keyboard editing; drawing tools also place an initial
+            editable object with Enter on the focused sheet. Arrow keys move the probe. Ctrl/Cmd+Z
+            undoes edits.
+          </p>
+          <p>
+            The measured contour levels come from the instructor’s lab videos. The dipole’s 1.6 and
+            8.3 V levels reflect probe clearance near the mounting hardware. Terminal feeds on
+            plates are schematic; the solved plate geometry matches fields.py. Export saves the map
+            with its legend and current arrangement title.
+          </p>
+        </details>
+      </section>
+    </main>
+    <footer>
+      A computational companion to the electric-field mapping lab
+      <br />
+      Steve Rubin, <a href="mailto:ser@ieee.org" style="color: inherit">ser@ieee.org</a>
+    </footer>
+
+    <!-- Physics is independent of the DOM so it can also run in the Node regression tests. -->
+    <script id="physics">
+      "use strict";
+
+      // === Physics: geometry, boundary conditions, and relaxation ===
+      // This closure exposes only the numerical API; each create() call owns its grid.
+      const Physics = (() => {
+        // Row-major indexing: k = y * NX + x. H is the spacing in centimeters.
+        // The 22 × 17 cm sheet includes both endpoints along each axis.
+        const NX = 221,
+          NY = 171,
+          H = 0.1,
+          L = NX * NY;
+
+        // Object schema:
+        //   terminal / insulator: { x, y, r, v, eps }
+        //   plate / polyline:     { points: [[x, y], ...], width, v }
+        // For conductors, v === null means floating (unknown voltage, zero net charge).
+        // For insulators, eps is relative permittivity; v is not used by the solver.
+        const disc = (x, y, r, v, eps) => ({
+          type: eps ? "insulator" : "terminal",
+          x,
+          y,
+          r,
+          v,
+          eps: eps || 1,
+        });
+        const plate = (x, y, x2, y2, v) => ({
+          type: "plate",
+          points: [
+            [x, y],
+            [x2, y2],
+          ],
+          v,
+          width: 0.3,
+        });
+
+        // Measured levels deliberately retain the instructor's uneven voltage spacing.
+        // The last two patterns have no measured levels and use evenly spaced contours.
+        const presets = [
+          {
+            name: "Parallel Plate Capacitor",
+            desc: "A nearly uniform field in the gap. Follow the curves around the plate ends.",
+            objects: [plate(6, 4, 6, 13, 0), plate(16, 4, 16, 13, 10)],
+            levels: [0, 1, 3, 5, 7, 9, 10],
+            mid: [11, 8.5],
+            note: "Watch the field fringe.",
+            detail:
+              "The potential is 5 V at the midpoint. In the middle of the gap, the field is nearly uniform; beyond the plate ends, it spreads out and weakens.",
+          },
+          {
+            name: "Small Circular Terminals",
+            desc: "Two small electrodes. A symmetric potential, with a field that fans outward.",
+            objects: [disc(7, 8.5, 0.75, 0), disc(15, 8.5, 0.75, 10)],
+            levels: [0, 1.6, 3, 5, 7, 8.3, 10],
+            mid: [11, 8.5],
+            note: "Equal spacing does not mean equal field.",
+            detail:
+              "The symmetric 5 V contour is the straight midline. Near each terminal, contours are almost circular and packed closely together: the field is stronger there.",
+          },
+          {
+            name: "Point and Plane",
+            desc: "One small terminal faces a broad plate. The geometry shifts the midpoint voltage.",
+            objects: [disc(5.5, 8.5, 0.75, 10), plate(17, 3, 17, 14, 0)],
+            levels: [0, 1.1, 2.5, 3.8, 5.5, 7.5, 10],
+            mid: [11.25, 8.5],
+            note: "Halfway across is below 5 V.",
+            detail:
+              "The sharper terminal concentrates the field. More of the potential drop occurs near it, so the geometric midpoint is below 5 V. This is the reference calculation mirrored to match the manual.",
+          },
+          {
+            name: "Insulator and Conductor in Field",
+            desc: "Compare a dielectric with an isolated conductor in the same applied field.",
+            objects: [
+              disc(3, 8.5, 0.65, 0),
+              disc(19, 8.5, 0.65, 10),
+              disc(11, 4, 2, null),
+              disc(11, 13, 2, 0, 4),
+            ],
+            mid: [11, 8.5],
+            note: "The field passes through the dielectric.",
+            detail:
+              "The hatched region has εᵣ = 4. The solid floating conductor has one uniform potential and zero internal field. Its voltage is solved by imposing zero net charge. The real bench apparatus cannot measure inside the insulator.",
+          },
+          {
+            name: 'Faraday "Ice Pail"',
+            desc: "An open conductor shields its cavity. Explore how far the outside field reaches.",
+            objects: [
+              disc(3, 8.5, 0.65, 0),
+              {
+                type: "polyline",
+                points: [
+                  [11, 4.5],
+                  [19, 4.5],
+                  [19, 12.5],
+                  [11, 12.5],
+                ],
+                v: 10,
+                width: 0.4,
+              },
+            ],
+            mid: [17, 8.5],
+            note: "An open pail is not a closed cage.",
+            detail:
+              "The field decays deeper inside the cavity, but enters through the opening. It is not exactly zero everywhere inside an open C-shape. Close the opening in Your Design to compare with a fully enclosed conductor.",
+          },
+        ];
+
+        // Distance to a finite segment; clamping the projection includes its end caps.
+        function distance(x, y, a, b) {
+          let dx = b[0] - a[0],
+            dy = b[1] - a[1],
+            t = Math.max(
+              0,
+              Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1)),
+            );
+          return Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy);
+        }
+
+        // Shared geometric predicate for rasterization, selection, and field-line stops.
+        // extra widens the hit target when selecting thin objects with a pointer.
+        function contains(o, x, y, extra = 0) {
+          return o.points
+            ? o.points
+                .slice(1)
+                .some((p, k) => distance(x, y, o.points[k], p) <= o.width / 2 + extra)
+            : Math.hypot(x - o.x, y - o.y) <= o.r + extra;
+        }
+        function center(o) {
+          return o.points
+            ? [
+                o.points.reduce((s, p) => s + p[0], 0) / o.points.length,
+                o.points.reduce((s, p) => s + p[1], 0) / o.points.length,
+              ]
+            : [o.x, o.y];
+        }
+
+        // Rasterize an arrangement and return a stateful solver.
+        // V: potential; eps: material permittivity; owner: conductor object index or -1.
+        // fixed marks every conductor cell, including floating cells, so ordinary SOR
+        // never updates a conductor's interior. Floating voltages are updated separately.
+        function create(objects) {
+          let V = new Float64Array(L),
+            eps = new Float64Array(L).fill(1),
+            owner = new Int16Array(L).fill(-1),
+            fixed = new Uint8Array(L),
+            floats = [],
+            errors = [];
+          let assigned = objects.filter((o) => o.type !== "insulator" && o.v !== null),
+            mean = assigned.length ? assigned.reduce((s, o) => s + o.v, 0) / assigned.length : 0;
+          V.fill(mean);
+          for (let j = 0; j < NY; j++)
+            for (let i = 0; i < NX; i++) {
+              let k = j * NX + i,
+                x = i * H,
+                y = j * H;
+              for (let n = 0; n < objects.length; n++) {
+                let o = objects[n];
+                if (!contains(o, x, y)) continue;
+                if (o.type === "insulator") eps[k] = o.eps;
+                else {
+                  if (owner[k] >= 0 && objects[owner[k]].v !== o.v)
+                    errors.push("Conductors with different voltages overlap. Move them apart.");
+                  owner[k] = n;
+                  fixed[k] = 1;
+                  V[k] = o.v === null ? mean : o.v;
+                }
+              }
+            }
+
+          // Cache the exposed faces of each floating conductor. Each face contributes
+          // its permittivity weight and neighboring potential to the zero-flux constraint.
+          for (let n = 0; n < objects.length; n++)
+            if (objects[n].type !== "insulator" && objects[n].v === null) {
+              let cells = [],
+                edges = [];
+              for (let k = 0; k < L; k++)
+                if (owner[k] === n) {
+                  cells.push(k);
+                  let x = k % NX,
+                    y = Math.floor(k / NX);
+                  for (let q of [
+                    x ? k - 1 : -1,
+                    x < NX - 1 ? k + 1 : -1,
+                    y ? k - NX : -1,
+                    y < NY - 1 ? k + NX : -1,
+                  ])
+                    if (q >= 0 && owner[q] !== n) edges.push([q, (eps[k] + eps[q]) / 2]);
+                }
+              floats.push({ cells, edges, value: mean });
+            }
+          // Outward neighbors reflect to the boundary cell, matching np.pad(mode="edge").
+          let weights = new Float64Array(L * 4);
+          for (let k = 0; k < L; k++) {
+            let x = k % NX,
+              y = Math.floor(k / NX);
+            [
+              x ? k - 1 : k,
+              x < NX - 1 ? k + 1 : k,
+              y ? k - NX : k,
+              y < NY - 1 ? k + NX : k,
+            ].forEach((q, d) => (weights[k * 4 + d] = (eps[k] + eps[q]) / 2));
+          }
+          let sweep = 0,
+            delta = Infinity,
+            done = false;
+          const omega = 2 / (1 + Math.PI / Math.max(NX, NY));
+
+          // One sweep updates red cells, then black cells, then floating conductors.
+          // omega accelerates Gauss–Seidel; delta is the largest voltage update this sweep.
+          // Bounded batches let the application yield to the browser between updates.
+          function step(count = 20) {
+            for (let s = 0; s < count && !done; s++) {
+              delta = 0;
+              for (let c = 0; c < 2; c++)
+                for (let y = 0; y < NY; y++)
+                  for (let x = (y + c) % 2; x < NX; x += 2) {
+                    let k = y * NX + x;
+                    if (fixed[k]) continue;
+                    let w = k * 4,
+                      a = weights[w],
+                      b = weights[w + 1],
+                      d = weights[w + 2],
+                      e = weights[w + 3];
+                    let target =
+                      (a * V[x ? k - 1 : k] +
+                        b * V[x < NX - 1 ? k + 1 : k] +
+                        d * V[y ? k - NX : k] +
+                        e * V[y < NY - 1 ? k + NX : k]) /
+                      (a + b + d + e);
+                    let change = omega * (target - V[k]);
+                    V[k] += change;
+                    delta = Math.max(delta, Math.abs(change));
+                  }
+              // Zero net interface flux gives Vf = sum(weight * Vneighbor) / sum(weight).
+              // Apply that single voltage to every cell belonging to the floating conductor.
+              for (let f of floats) {
+                let sum = 0,
+                  w = 0;
+                for (let [q, a] of f.edges) {
+                  sum += a * V[q];
+                  w += a;
+                }
+                let next = w ? sum / w : mean;
+                delta = Math.max(delta, Math.abs(next - f.value));
+                f.value = next;
+                for (let k of f.cells) V[k] = next;
+              }
+              sweep++;
+              done = delta < 1e-6 || sweep >= 20000;
+            }
+            return done;
+          }
+
+          // Bilinear interpolation gives a continuous probe value between grid nodes.
+          function sample(x, y) {
+            x = Math.max(0, Math.min(22, x));
+            y = Math.max(0, Math.min(17, y));
+            let gx = x / H,
+              gy = y / H,
+              i = Math.min(NX - 2, Math.floor(gx)),
+              j = Math.min(NY - 2, Math.floor(gy)),
+              a = gx - i,
+              b = gy - j,
+              k = j * NX + i;
+            return (
+              (1 - b) * ((1 - a) * V[k] + a * V[k + 1]) +
+              b * ((1 - a) * V[k + NX] + a * V[k + NX + 1])
+            );
+          }
+
+          // E = -grad(V): central differences in the interior and one-sided at the edges.
+          // Mask conductor interiors explicitly, including their continuous drawn geometry.
+          function field(x, y) {
+            let i = Math.max(0, Math.min(NX - 1, Math.round(x / H))),
+              j = Math.max(0, Math.min(NY - 1, Math.round(y / H)));
+            if (
+              fixed[j * NX + i] ||
+              objects.some((o) => o.type !== "insulator" && contains(o, x, y))
+            )
+              return [0, 0];
+            let dx = Math.min(22, x + H) - Math.max(0, x - H),
+              dy = Math.min(17, y + H) - Math.max(0, y - H);
+            return [
+              -(sample(x + H, y) - sample(x - H, y)) / dx,
+              -(sample(x, y + H) - sample(x, y - H)) / dy,
+            ];
+          }
+          return {
+            V,
+            eps,
+            owner,
+            fixed,
+            floats,
+            errors: [...new Set(errors)],
+            step,
+            sample,
+            field,
+            get sweep() {
+              return sweep;
+            },
+            get delta() {
+              return delta;
+            },
+            get converged() {
+              return delta < 1e-6;
+            },
+            get done() {
+              return done;
+            },
+          };
+        }
+        return { NX, NY, H, presets, create, contains, center, distance };
+      })();
+    </script>
+    <script>
+      "use strict";
+
+      // === Application state and coordinate conversion ===
+      // The numerical module above does not read or modify these DOM elements.
+      const $ = (id) => document.getElementById(id),
+        canvas = $("map"),
+        ctx = canvas.getContext("2d"),
+        P = Physics,
+        S = 50;
+
+      // objects is the editable geometry; model is its most recent numerical solution.
+      // draft is an unfinished new object; drag holds a snapshot for moving/resizing.
+      // token invalidates queued solver frames when a newer solve has superseded them.
+      // Render caches are rebuilt after solving, rather than on every pointer movement.
+      let preset = 0,
+        objects = [],
+        model = null,
+        editor = false,
+        tool = "select",
+        selected = -1,
+        history = [],
+        draft = null,
+        drag = null,
+        token = 0,
+        probe = null,
+        paths = [],
+        contourPaths = [],
+        heatCanvas = null,
+        savedDesign = null;
+      const clone = (o) => JSON.parse(JSON.stringify(o));
+
+      // Physics y increases upward; canvas y increases downward. S is pixels per cm.
+      const toCanvas = (p) => [p[0] * S, (17 - p[1]) * S];
+      function line(a, b) {
+        ctx.moveTo(...toCanvas(a));
+        ctx.lineTo(...toCanvas(b));
+      }
+
+      // Store geometry snapshots only. Undo recomputes the field from the restored scene.
+      function save() {
+        history.push(clone(objects));
+        if (history.length > 50) history.shift();
+        $("undo").disabled = false;
+      }
+      function center(o) {
+        return P.center(o);
+      }
+      function bounds(o) {
+        return o.points
+          ? o.points
+          : [
+              [o.x - o.r, o.y - o.r],
+              [o.x + o.r, o.y + o.r],
+            ];
+      }
+
+      // Clamp translation so the stored points or disc bounds stay on the sheet.
+      function move(o, dx, dy) {
+        let pts = bounds(o);
+        dx = Math.max(
+          -Math.min(...pts.map((p) => p[0])),
+          Math.min(22 - Math.max(...pts.map((p) => p[0])), dx),
+        );
+        dy = Math.max(
+          -Math.min(...pts.map((p) => p[1])),
+          Math.min(17 - Math.max(...pts.map((p) => p[1])), dy),
+        );
+        if (o.points) o.points = o.points.map((p) => [p[0] + dx, p[1] + dy]);
+        else {
+          o.x += dx;
+          o.y += dy;
+        }
+      }
+
+      // === Preset navigation and editor controls ===
+      function setEditor(value) {
+        editor = value;
+        document.querySelectorAll(".editor").forEach((e) => (e.hidden = !value));
+        $("presets").hidden = value;
+        $("editPreset").hidden = value;
+        $("presetMode").classList.toggle("active", !value);
+        $("designMode").classList.toggle("active", value);
+        $("modeBadge").textContent = value ? "Your Design" : `Pattern 0${preset + 1} / 05`;
+        updateTitle();
+        syncInspector();
+        draw();
+      }
+      function updateTitle() {
+        $("title").textContent = editor ? "Your Design" : P.presets[preset].name;
+        $("description").textContent = editor
+          ? "Draw, move, and reshape electrodes. Probe the field that emerges."
+          : P.presets[preset].desc;
+        $("noteTitle").textContent = editor
+          ? "Build a question into your design."
+          : P.presets[preset].note;
+        $("note").textContent = editor
+          ? "Try a sharp tip, a narrow gap, or a closed loop. At least one fixed-voltage conductor anchors the potential; two different voltages create an applied field. Dielectrics transmit the field, while conductors stay equipotential."
+          : P.presets[preset].detail;
+      }
+      function load(n) {
+        if (editor) savedDesign = clone(objects);
+        token++;
+        preset = n;
+        objects = clone(P.presets[n].objects);
+        history = [];
+        selected = -1;
+        draft = null;
+        $("undo").disabled = true;
+        $("levelMode").value = P.presets[n].levels ? "measured" : "even";
+        document
+          .querySelectorAll(".preset")
+          .forEach((b, i) => b.classList.toggle("active", i === n));
+        setEditor(false);
+        solve();
+      }
+      P.presets.forEach((p, i) => {
+        let b = document.createElement("button");
+        b.className = "preset";
+        b.innerHTML = `<span class="num">0${i + 1}</span>${p.name.replaceAll('"', "&quot;")}`;
+        b.onclick = () => load(i);
+        $("presets").append(b);
+      });
+      $("presetMode").onclick = () => load(preset);
+      $("designMode").onclick = () => {
+        if (!editor) {
+          save();
+          objects = savedDesign ? clone(savedDesign) : [];
+          selected = -1;
+          setEditor(true);
+          solve();
+        }
+      };
+      $("editPreset").onclick = () => {
+        setEditor(true);
+        solve();
+      };
+      const hints = {
+        select:
+          "Click any existing object to edit it. Drag its body to move; drag square handles to resize. Delete/Backspace removes the selection.",
+        plate: "Drag from one end of a plate to the other.",
+        terminal: "Click to place a terminal; drag outward to choose its radius.",
+        polyline: "Click to add corners. Enter or Finish completes the conductor. Escape cancels.",
+        insulator: "Click and drag a dielectric disc. Set εᵣ in its properties.",
+      };
+      for (let t of ["select", "plate", "terminal", "polyline", "insulator"]) {
+        let b = document.createElement("button");
+        b.textContent = {
+          select: "↖ Select / move",
+          plate: "╱ Plate",
+          terminal: "● Terminal",
+          polyline: "⌜ Polyline",
+          insulator: "◍ Insulator",
+        }[t];
+        b.dataset.tool = t;
+        b.onclick = () => setTool(t);
+        $("tools").append(b);
+      }
+      function setTool(t) {
+        tool = t;
+        draft = null;
+        document
+          .querySelectorAll("[data-tool]")
+          .forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
+        $("toolHint").textContent = hints[t];
+        $("finish").hidden = t !== "polyline";
+        draw();
+      }
+
+      // Rebuild the object list and type-specific properties after selection or edits.
+      // Vertex controls provide a keyboard-accessible alternative to dragging handles.
+      function syncInspector() {
+        let list = $("objects");
+        list.replaceChildren();
+        let blank = document.createElement("option");
+        blank.value = -1;
+        blank.textContent = "Select an object…";
+        list.append(blank);
+        objects.forEach((o, i) => {
+          let op = document.createElement("option");
+          op.value = i;
+          op.textContent = `${i + 1}. ${o.type} · ${o.type === "insulator" ? "εᵣ " + o.eps : o.v === null ? "floating" : o.v + " V"}`;
+          list.append(op);
+        });
+        list.value = selected;
+        $("inspector").hidden = selected < 0;
+        let o = objects[selected];
+        if (!o) return;
+        $("selectionTitle").textContent = `Selected ${o.type} ${selected + 1}`;
+        $("addVertex").hidden = o.type !== "polyline";
+        let ins = o.type === "insulator";
+        $("voltageLabel").hidden = ins;
+        $("floatLabel").hidden = ins;
+        $("epsilonLabel").hidden = !ins;
+        $("voltage").value = o.v ?? 0;
+        $("voltage").disabled = o.v === null;
+        $("floating").checked = o.v === null;
+        $("epsilon").value = o.eps || 1;
+        let c = center(o);
+        $("objX").value = c[0].toFixed(2);
+        $("objY").value = c[1].toFixed(2);
+        $("radiusLabel").hidden = !!o.points;
+        $("radius").value = o.r || 0.75;
+        let vertices = $("vertices");
+        vertices.replaceChildren();
+        if (o.points)
+          o.points.forEach((point, i) => {
+            let row = document.createElement("div");
+            row.className = "row";
+            point.forEach((value, axis) => {
+              let label = document.createElement("label");
+              label.textContent = `Vertex ${i + 1} ${axis ? "y" : "x"} (cm)`;
+              let input = document.createElement("input");
+              input.type = "number";
+              input.min = ".2";
+              input.max = axis ? "16.8" : "21.8";
+              input.step = ".1";
+              input.value = value.toFixed(2);
+              input.onchange = () => {
+                if (input.checkValidity()) modify((o) => (o.points[i][axis] = +input.value));
+              };
+              label.append(input);
+              row.append(label);
+            });
+            if (o.type === "polyline") {
+              let remove = document.createElement("button");
+              remove.textContent = `Delete vertex ${i + 1}`;
+              remove.disabled = o.points.length <= 2;
+              remove.onclick = () => modify((o) => o.points.splice(i, 1));
+              row.append(remove);
+            }
+            vertices.append(row);
+          });
+      }
+      $("objects").onchange = () => {
+        selected = +$("objects").value;
+        setTool("select");
+        syncInspector();
+        draw();
+      };
+
+      // Property changes share the same undo → edit → refresh → solve sequence.
+      function modify(fn) {
+        if (selected < 0) return;
+        save();
+        fn(objects[selected]);
+        syncInspector();
+        solve();
+      }
+      $("voltage").onchange = () => {
+        if ($("voltage").checkValidity()) modify((o) => (o.v = +$("voltage").value));
+      };
+      $("epsilon").onchange = () => {
+        if ($("epsilon").checkValidity()) modify((o) => (o.eps = +$("epsilon").value));
+      };
+      $("floating").onchange = () => modify((o) => (o.v = $("floating").checked ? null : 10));
+      for (let [id, axis] of [
+        ["objX", 0],
+        ["objY", 1],
+      ])
+        $(id).onchange = () => {
+          if ($(id).checkValidity())
+            modify((o) => {
+              let c = center(o),
+                d = +$(id).value - c[axis];
+              move(o, axis === 0 ? d : 0, axis === 1 ? d : 0);
+            });
+        };
+      $("radius").onchange = () => {
+        if ($("radius").checkValidity())
+          modify((o) => (o.r = Math.min(+$("radius").value, o.x, 22 - o.x, o.y, 17 - o.y)));
+      };
+      $("addVertex").onclick = () =>
+        modify((o) => {
+          let p = o.points[o.points.length - 1];
+          o.points.push([Math.min(21.8, p[0] + 1), p[1]]);
+        });
+      $("delete").onclick = () => {
+        if (selected < 0) return;
+        save();
+        objects.splice(selected, 1);
+        selected = -1;
+        syncInspector();
+        solve();
+      };
+      $("clear").onclick = () => {
+        save();
+        objects = [];
+        selected = -1;
+        draft = null;
+        syncInspector();
+        solve();
+      };
+      $("undo").onclick = () => {
+        if (history.length) {
+          objects = history.pop();
+          selected = -1;
+          draft = null;
+          $("undo").disabled = !history.length;
+          syncInspector();
+          solve();
+        }
+      };
+
+      // Custom designs span their actual driven voltages, which need not be 0 and 10.
+      function levels() {
+        let fixed = objects.filter((o) => o.type !== "insulator" && o.v !== null).map((o) => o.v),
+          min = fixed.length ? Math.min(...fixed) : 0,
+          max = fixed.length ? Math.max(...fixed) : 10;
+        let measured = !editor && P.presets[preset].levels;
+        if ($("levelMode").value === "measured" && measured) return measured;
+        let count =
+          $("levelMode").value === "custom" ? Math.max(1, Math.min(25, +$("count").value || 9)) : 9;
+        return Array.from({ length: count + 2 }, (_, i) => min + ((max - min) * i) / (count + 1));
+      }
+      function updateLevels() {
+        $("countLabel").hidden = $("levelMode").value !== "custom";
+        $("levelMode").options[0].disabled = editor || !P.presets[preset].levels;
+        if ($("levelMode").options[0].disabled && $("levelMode").value === "measured")
+          $("levelMode").value = "even";
+        $("levelsText").textContent =
+          levels()
+            .map((v) => +v.toFixed(2))
+            .join(" · ") + " V";
+      }
+      for (let id of ["contours", "streams", "heat", "labels"]) $(id).onchange = draw;
+      for (let id of ["levelMode", "count"])
+        $(id).onchange = () => {
+          updateLevels();
+          if (model?.done) buildContours();
+          draw();
+        };
+
+      // === Cooperative solving and derived render caches ===
+      // Geometry edits start a fresh solve. Each animation frame spends roughly 14 ms
+      // on relaxation; stale callbacks exit when their ticket no longer matches token.
+      // Export stays disabled while the displayed solution is incomplete or invalid.
+      function solve() {
+        $("export").disabled = true;
+        const ticket = ++token;
+        paths = [];
+        contourPaths = [];
+        heatCanvas = null;
+        model = P.create(objects);
+        updateLevels();
+        syncInspector();
+        $("midpoint").textContent = "— V";
+        $("message").textContent = model.errors.join(" ");
+        let fixed = objects.filter((o) => o.type !== "insulator" && o.v !== null);
+        if (!fixed.length) {
+          $("status").textContent = "Add a fixed-voltage conductor";
+          $("message").textContent =
+            "The absolute potential needs a fixed-voltage conductor. Add a 0 V terminal and a 10 V terminal to create a field.";
+          model = null;
+          draw();
+          return;
+        }
+        if (model.errors.length) {
+          $("status").textContent = "Resolve overlapping conductors";
+          model = null;
+          draw();
+          return;
+        }
+        $("status").textContent = "Solving…";
+        draw();
+        function frame() {
+          if (ticket !== token) return;
+          let start = performance.now();
+          do {
+            model.step(8);
+          } while (!model.done && performance.now() - start < 14);
+          $("status").textContent = `Solving · ${model.sweep} sweeps`;
+          if (model.done) {
+            $("export").disabled = false;
+            buildContours();
+            buildStreams();
+            buildHeat();
+            $("status").textContent = model.converged
+              ? `Converged · ${model.sweep} sweeps`
+              : "Iteration limit · approximate";
+            let mid = editor ? [11, 8.5] : P.presets[preset].mid;
+            $("midpoint").textContent = model.sample(...mid).toFixed(3) + " V";
+            $("midLabel").textContent =
+              preset === 4 && !editor ? "Deep inside the cavity" : `At (${mid[0]}, ${mid[1]}) cm`;
+            if (fixed.every((o) => o.v === fixed[0].v))
+              $("message").textContent =
+                "All driven conductors have the same voltage, so the equilibrium field is zero.";
+            draw();
+            updateProbe();
+          } else {
+            draw();
+            requestAnimationFrame(frame);
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+
+      // === Equipotentials: marching squares ===
+      // Interpolate crossings around each grid cell and keep short contour segments.
+      // Cells touching conductors are skipped; electrode labels show endpoint voltages.
+      function buildContours() {
+        contourPaths = [];
+        if (!model) return;
+        let { NX, NY, H } = P;
+        for (let level of levels()) {
+          let segments = [];
+          for (let y = 0; y < NY - 1; y++)
+            for (let x = 0; x < NX - 1; x++) {
+              let k = y * NX + x,
+                ids = [k, k + 1, k + NX + 1, k + NX],
+                v = ids.map((i) => model.V[i]);
+              if (ids.some((i) => model.fixed[i])) continue;
+              let points = [
+                  [x * H, y * H],
+                  [(x + 1) * H, y * H],
+                  [(x + 1) * H, (y + 1) * H],
+                  [x * H, (y + 1) * H],
+                ],
+                hits = [];
+              for (let e = 0; e < 4; e++) {
+                let n = (e + 1) % 4;
+                if (v[e] < level !== v[n] < level) {
+                  let t = (level - v[e]) / (v[n] - v[e]);
+                  hits.push([
+                    points[e][0] + t * (points[n][0] - points[e][0]),
+                    points[e][1] + t * (points[n][1] - points[e][1]),
+                  ]);
+                }
+              }
+              if (hits.length === 2) segments.push(hits);
+              // A saddle cell has four crossings. Its center-average sign selects the pairing.
+              else if (hits.length === 4) {
+                let high = v.reduce((a, b) => a + b) / 4 >= level;
+                if (v[0] >= level === high) {
+                  segments.push([hits[0], hits[1]], [hits[2], hits[3]]);
+                } else {
+                  segments.push([hits[0], hits[3]], [hits[1], hits[2]]);
+                }
+              }
+            }
+          contourPaths.push({ level, segments });
+        }
+      }
+
+      // Streamlines end at conductors or the sheet edge; dielectrics remain traversable.
+      function blocked(p) {
+        return (
+          p[0] < 0.025 ||
+          p[0] > 21.975 ||
+          p[1] < 0.025 ||
+          p[1] > 16.975 ||
+          objects.some((o) => o.type !== "insulator" && P.contains(o, ...p))
+        );
+      }
+
+      // Normalize E so streamline step size is geometric, independent of field strength.
+      function direction(p, sign) {
+        let f = model.field(...p),
+          n = Math.hypot(...f);
+        return n > 1e-7 ? [(sign * f[0]) / n, (sign * f[1]) / n] : null;
+      }
+
+      // Integrate one streamline with fourth-order Runge–Kutta and a 0.045 cm step.
+      // sign selects forward/backward tracing. Stop at boundaries, weak fields, or stalls.
+      function trace(seed, sign) {
+        let out = [],
+          p = seed,
+          h = 0.045;
+        for (let i = 0; i < 2200; i++) {
+          if (blocked(p)) break;
+          out.push(p);
+          let a = direction(p, sign);
+          if (!a) break;
+          let b = direction([p[0] + (h * a[0]) / 2, p[1] + (h * a[1]) / 2], sign);
+          if (!b) break;
+          let c = direction([p[0] + (h * b[0]) / 2, p[1] + (h * b[1]) / 2], sign);
+          if (!c) break;
+          let d = direction([p[0] + h * c[0], p[1] + h * c[1]], sign);
+          if (!d) break;
+          let next = [
+            p[0] + (h * (a[0] + 2 * b[0] + 2 * c[0] + d[0])) / 6,
+            p[1] + (h * (a[1] + 2 * b[1] + 2 * c[1] + d[1])) / 6,
+          ];
+          if (Math.hypot(next[0] - p[0], next[1] - p[1]) < h * 0.2) break;
+          p = next;
+        }
+        return out;
+      }
+
+      // === Field lines: surface seeds and bidirectional tracing ===
+      // Floating conductors need their own seeds: tracing cannot pass through their
+      // interiors to discover the field on the opposite side.
+      function buildStreams() {
+        paths = [];
+        if (!model) return;
+        const driven = objects.filter((o) => o.type !== "insulator" && o.v !== null);
+        const min = Math.min(...driven.map((o) => o.v)),
+          max = Math.max(...driven.map((o) => o.v));
+        if (max - min < 1e-9) return;
+        const perimeter = (o) =>
+          o.points
+            ? 2 *
+              o.points
+                .slice(1)
+                .reduce(
+                  (s, p, i) => s + Math.hypot(p[0] - o.points[i][0], p[1] - o.points[i][1]),
+                  0,
+                )
+            : 2 * Math.PI * o.r;
+        const total = (v) => driven.filter((o) => o.v === v).reduce((s, o) => s + perimeter(o), 0);
+        // Seed the smaller driven surface, then trace BOTH directions. A small external
+        // terminal samples an open pail without visually exaggerating its weak cavity field.
+        const seedLow = total(min) < total(max),
+          polarity = seedLow ? -1 : 1,
+          seeds = [];
+        objects.forEach((o) => {
+          if (o.type === "insulator") return;
+          if (o.v !== null && (seedLow ? o.v === max : o.v === min)) return;
+          const candidates = [];
+          function add(p, normal) {
+            if (blocked(p)) return;
+            const f = model.field(...p),
+              flux = polarity * (f[0] * normal[0] + f[1] * normal[1]);
+            if (flux > 1e-6) candidates.push({ p, flux });
+          }
+          if (!o.points) {
+            for (let i = 0; i < 24; i++) {
+              const angle = ((i + 0.5) * 2 * Math.PI) / 24,
+                normal = [Math.cos(angle), Math.sin(angle)];
+              add([o.x + (o.r + 0.17) * normal[0], o.y + (o.r + 0.17) * normal[1]], normal);
+            }
+          } else
+            for (let j = 1; j < o.points.length; j++) {
+              const a = o.points[j - 1],
+                b = o.points[j],
+                dx = b[0] - a[0],
+                dy = b[1] - a[1],
+                len = Math.hypot(dx, dy);
+              if (len < 0.01) continue;
+              const n = Math.max(2, 2 * Math.ceil(len / 1.4));
+              for (let i = 0; i < n; i++)
+                for (let sign of [-1, 1]) {
+                  const normal = [(-sign * dy) / len, (sign * dx) / len];
+                  add(
+                    [
+                      a[0] + (dx * (i + 0.5)) / n + normal[0] * (o.width / 2 + 0.17),
+                      a[1] + (dy * (i + 0.5)) / n + normal[1] * (o.width / 2 + 0.17),
+                    ],
+                    normal,
+                  );
+                }
+            }
+          const strongest = Math.max(...candidates.map((c) => c.flux));
+          for (const c of candidates) if (c.flux > strongest * 0.08) seeds.push(c.p);
+        });
+        for (const seed of seeds) {
+          const back = trace(seed, -1).reverse(),
+            forward = trace(seed, 1),
+            path = back.concat(forward.slice(1));
+          if (path.length > 5) paths.push(path);
+        }
+      }
+
+      // Cache one pixel per grid node, using log compression to retain weak-field detail.
+      // Flip rows here because the physical grid and canvas have opposite y directions.
+      function buildHeat() {
+        heatCanvas = document.createElement("canvas");
+        heatCanvas.width = P.NX;
+        heatCanvas.height = P.NY;
+        let hctx = heatCanvas.getContext("2d"),
+          img = hctx.createImageData(P.NX, P.NY);
+        for (let y = 0; y < P.NY; y++)
+          for (let x = 0; x < P.NX; x++) {
+            let f = model.field(x * 0.1, y * 0.1),
+              t = Math.min(1, Math.log1p(Math.hypot(...f)) / Math.log(5)),
+              k = ((P.NY - 1 - y) * P.NX + x) * 4;
+            img.data[k] = 235;
+            img.data[k + 1] = Math.round(225 - 130 * t);
+            img.data[k + 2] = Math.round(174 - 115 * t);
+            img.data[k + 3] = Math.round(35 + 150 * t);
+          }
+        hctx.putImageData(img, 0, 0);
+      }
+
+      // === Canvas rendering and selection geometry ===
+      // Share handle positions between drawing and hit testing.
+      function handlesFor(o) {
+        return (
+          o.points || [
+            [o.x + o.r, o.y],
+            [o.x, o.y + o.r],
+            [o.x - o.r, o.y],
+            [o.x, o.y - o.r],
+          ]
+        );
+      }
+      function hitObject(p) {
+        return objects.findLastIndex((o) => P.contains(o, ...p, 0.15));
+      }
+
+      // Keep handle hit targets usable when CSS scales the canvas down.
+      function hitHandle(p) {
+        const o = objects[selected];
+        if (!o) return -1;
+        const tolerance = Math.max(0.2, (9 * 22) / canvas.getBoundingClientRect().width);
+        return handlesFor(o).findIndex((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < tolerance);
+      }
+
+      // Draw material shapes first, then voltage/permittivity labels and editing handles.
+      function drawObject(o, index, ghost = false) {
+        ctx.save();
+        ctx.globalAlpha = ghost ? 0.5 : 1;
+        ctx.fillStyle = o.type === "insulator" ? "#dde7d9" : "#34493c";
+        ctx.strokeStyle = o.type === "insulator" ? "#71876c" : "#34493c";
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        if (o.points) {
+          ctx.lineWidth = o.width * S;
+          o.points.forEach((p, i) => ctx[i ? "lineTo" : "moveTo"](...toCanvas(p)));
+          ctx.stroke();
+        } else {
+          ctx.arc(...toCanvas([o.x, o.y]), o.r * S, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          if (o.type === "insulator") {
+            ctx.clip();
+            ctx.strokeStyle = "#8c9f86";
+            ctx.lineWidth = 1;
+            for (let d = -1000; d < 1200; d += 10) {
+              ctx.beginPath();
+              ctx.moveTo(d, 0);
+              ctx.lineTo(d + 850, 850);
+              ctx.stroke();
+            }
+          }
+        }
+        ctx.restore();
+        if ($("labels").checked && !ghost) {
+          let c = center(o),
+            text =
+              o.type === "insulator"
+                ? `εᵣ = ${o.eps}`
+                : o.v === null
+                  ? `Floating ${model?.floats.find((f) => model.owner[f.cells[0]] === index)?.value.toFixed(2) ?? "…"} V`
+                  : `${o.v} V`;
+          let p = toCanvas([
+            c[0],
+            o.points ? Math.max(...o.points.map((p) => p[1])) + 0.55 : c[1] + o.r + 0.48,
+          ]);
+          ctx.font = "bold 14px system-ui";
+          ctx.textAlign = "center";
+          label(text, p[0], p[1]);
+        }
+        if (editor && index === selected) {
+          ctx.strokeStyle = "#438ac0";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          if (!o.points) {
+            ctx.arc(...toCanvas([o.x, o.y]), o.r * S + 3, 0, 2 * Math.PI);
+            ctx.stroke();
+          }
+          let handles = handlesFor(o);
+          for (let p of handles) {
+            let [x, y] = toCanvas(p);
+            ctx.fillStyle = "white";
+            ctx.fillRect(x - 5, y - 5, 10, 10);
+            ctx.strokeRect(x - 5, y - 5, 10, 10);
+          }
+        }
+      }
+
+      // Back each label with paper color so crossing lines do not obscure its text.
+      function label(text, x, y) {
+        let w = ctx.measureText(text).width;
+        x = Math.max(w / 2 + 5, Math.min(1095 - w / 2, x));
+        y = Math.max(16, Math.min(835, y));
+        ctx.fillStyle = "#fbfaf4";
+        ctx.fillRect(x - w / 2 - 4, y - 13, w + 8, 19);
+        ctx.fillStyle = "#24352c";
+        ctx.fillText(text, x, y);
+      }
+
+      // Compose cached layers from back to front: paper, heatmap, grid, contours,
+      // field lines, contour labels, electrodes, and transient editor/probe overlays.
+      // Export omits the transient overlays.
+      function draw(exporting = false) {
+        ctx.clearRect(0, 0, 1100, 850);
+        ctx.fillStyle = "#fbfaf4";
+        ctx.fillRect(0, 0, 1100, 850);
+        if ($("heat").checked && heatCanvas) ctx.drawImage(heatCanvas, 0, 0, 1100, 850);
+        ctx.fillStyle = "#cad2c6";
+        for (let x = 1; x < 22; x++)
+          for (let y = 1; y < 17; y++) {
+            ctx.beginPath();
+            ctx.arc(x * S, y * S, 0.8, 0, 7);
+            ctx.fill();
+          }
+        if ($("contours").checked) {
+          ctx.strokeStyle = "#30382e";
+          ctx.lineWidth = 1.5;
+          for (let c of contourPaths) {
+            ctx.beginPath();
+            for (let [a, b] of c.segments) line(a, b);
+            ctx.stroke();
+          }
+        }
+        if ($("streams").checked) {
+          ctx.strokeStyle = "#E8720C";
+          ctx.fillStyle = "#E8720C";
+          ctx.lineWidth = 1.55;
+          for (let path of paths) {
+            ctx.beginPath();
+            path.forEach((p, i) => ctx[i ? "lineTo" : "moveTo"](...toCanvas(p)));
+            ctx.stroke();
+            for (let fraction of [0.3, 0.7]) {
+              let n = Math.floor((path.length - 2) * fraction),
+                a = toCanvas(path[n]),
+                b = toCanvas(path[n + 1]),
+                angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+              ctx.beginPath();
+              ctx.moveTo(...a);
+              ctx.lineTo(a[0] - 9 * Math.cos(angle - 0.45), a[1] - 9 * Math.sin(angle - 0.45));
+              ctx.lineTo(a[0] - 9 * Math.cos(angle + 0.45), a[1] - 9 * Math.sin(angle + 0.45));
+              ctx.closePath();
+              ctx.fill();
+            }
+          }
+        }
+        if ($("contours").checked) {
+          ctx.font = "12px system-ui";
+          ctx.textAlign = "center";
+          let placed = $("labels").checked
+            ? objects.map((o) => {
+                let c = center(o);
+                return [
+                  c[0],
+                  o.points ? Math.max(...o.points.map((p) => p[1])) + 0.55 : c[1] + o.r + 0.48,
+                ];
+              })
+            : [];
+          for (let c of contourPaths) {
+            let candidates = c.segments.filter(
+              ([a]) => a[0] > 1 && a[0] < 21 && a[1] > 1 && a[1] < 16,
+            );
+            if (!candidates.length) continue;
+            let best = null,
+              score = Infinity;
+            for (let [a, b] of candidates) {
+              let p = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
+                v = Math.abs(p[1] - 12.8) + Math.abs(p[0] - 11) * 0.15;
+              if (placed.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 1.1)) continue;
+              if (v < score) {
+                score = v;
+                best = p;
+              }
+            }
+            if (best) {
+              placed.push(best);
+              let p = toCanvas(best);
+              label(`${+c.level.toFixed(2)} V`, p[0], p[1] + 4);
+            }
+          }
+        }
+        objects.forEach((o, i) => drawObject(o, exporting ? -2 : i));
+        if (draft && !exporting) drawObject(draft, -2, true);
+        if (probe && !exporting) {
+          let [x, y] = toCanvas(probe);
+          ctx.strokeStyle = "#327457";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(x, y, 7, 0, 7);
+          ctx.moveTo(x - 13, y);
+          ctx.lineTo(x + 13, y);
+          ctx.moveTo(x, y - 13);
+          ctx.lineTo(x, y + 13);
+          ctx.stroke();
+        }
+      }
+
+      // Inside a conductor, report its exact equipotential instead of an interpolated
+      // value that could mix in neighboring nonconductor cells near the surface.
+      function updateProbe() {
+        if (!probe || !model?.done) {
+          $("probeV").textContent = "— V";
+          $("probeE").textContent = "— V/cm";
+          return;
+        }
+        let v = model.sample(...probe),
+          f = model.field(...probe),
+          o = objects.findLast((o) => P.contains(o, ...probe));
+        if (o && o.type !== "insulator") {
+          v =
+            o.v === null
+              ? (model.floats.find((f) => model.owner[f.cells[0]] === objects.indexOf(o))?.value ??
+                v)
+              : o.v;
+          f = [0, 0];
+        }
+        $("probeV").textContent = v.toFixed(3) + " V";
+        $("probeE").textContent = Math.hypot(...f).toFixed(3) + " V/cm";
+        $("probePosition").textContent = `x ${probe[0].toFixed(2)} · y ${probe[1].toFixed(2)} cm`;
+        $("probeMaterial").textContent = o
+          ? o.type === "insulator"
+            ? "Inside dielectric"
+            : "Inside conductor · E = 0"
+          : "Potential gradient";
+      }
+
+      // === Pointer and keyboard interaction ===
+      // Convert CSS pointer coordinates to centimeters, allowing a small edge margin.
+      function eventPoint(e) {
+        let r = canvas.getBoundingClientRect();
+        return [
+          Math.max(0.2, Math.min(21.8, ((e.clientX - r.left) / r.width) * 22)),
+          Math.max(0.2, Math.min(16.8, 17 - ((e.clientY - r.top) / r.height) * 17)),
+        ];
+      }
+      function newObject(t, p) {
+        let fixed = objects.filter((o) => o.type !== "insulator" && o.v !== null);
+        let v = fixed.length ? 10 : 0;
+        return t === "plate" || t === "polyline"
+          ? { type: t, points: [p.slice(), p.slice()], width: 0.3, v }
+          : {
+              type: t,
+              x: p[0],
+              y: p[1],
+              r: Math.min(0.6, p[0], 22 - p[0], p[1], 17 - p[1]),
+              v: t === "insulator" ? 0 : v,
+              eps: 4,
+            };
+      }
+      canvas.onpointerdown = (e) => {
+        canvas.focus();
+        const p = eventPoint(e);
+        probe = p;
+        const hit = hitObject(p);
+        // Directly editing a preset creates a custom arrangement with the same objects.
+        if (!editor) {
+          if (hit < 0) {
+            updateProbe();
+            draw();
+            return;
+          }
+          setEditor(true);
+          setTool("select");
+          updateLevels();
+        }
+        if (tool === "polyline") {
+          if (!draft) {
+            draft = newObject(tool, p);
+            draft.points = [p];
+          } else draft.points.push(p);
+          draw();
+          return;
+        }
+        canvas.setPointerCapture(e.pointerId);
+        const handle = hitHandle(p);
+        if (tool === "select" || hit >= 0 || handle >= 0) {
+          setTool("select");
+          if (handle < 0) selected = hit;
+          if (selected >= 0) {
+            save();
+            drag = { start: p, original: clone(objects[selected]), handle };
+          }
+          syncInspector();
+          draw();
+        } else {
+          draft = newObject(tool, p);
+          drag = { start: p };
+          draw();
+        }
+      };
+
+      // During a drag, update geometry from its original snapshot. Defer the numerical
+      // re-solve until pointerup so dragging does not launch a solve for every event.
+      canvas.onpointermove = (e) => {
+        let p = eventPoint(e);
+        probe = p;
+        updateProbe();
+        canvas.style.cursor = drag
+          ? "grabbing"
+          : hitHandle(p) >= 0
+            ? "nwse-resize"
+            : hitObject(p) >= 0
+              ? "grab"
+              : "crosshair";
+        if (drag) {
+          if (draft) {
+            if (draft.points) draft.points[1] = p;
+            else
+              draft.r = Math.min(
+                5,
+                Math.max(0.2, Math.hypot(p[0] - draft.x, p[1] - draft.y)),
+                draft.x,
+                22 - draft.x,
+                draft.y,
+                17 - draft.y,
+              );
+          } else if (selected >= 0) {
+            let o = clone(drag.original);
+            if (drag.handle >= 0) {
+              if (o.points) o.points[drag.handle] = p;
+              else
+                o.r = Math.max(
+                  0.2,
+                  Math.min(5, Math.hypot(p[0] - o.x, p[1] - o.y), o.x, 22 - o.x, o.y, 17 - o.y),
+                );
+            } else move(o, p[0] - drag.start[0], p[1] - drag.start[1]);
+            objects[selected] = o;
+          }
+        }
+        draw();
+      };
+      canvas.onpointerup = () => {
+        if (!drag) return;
+        if (draft) {
+          if (
+            draft.points &&
+            Math.hypot(
+              draft.points[0][0] - draft.points[1][0],
+              draft.points[0][1] - draft.points[1][1],
+            ) < 0.2
+          )
+            draft.points[1] = [Math.min(21.8, draft.points[0][0] + 2), draft.points[0][1]];
+          save();
+          objects.push(draft);
+          selected = objects.length - 1;
+          draft = null;
+          setTool("select");
+        }
+        drag = null;
+        syncInspector();
+        solve();
+      };
+
+      // Interrupted gestures restore the original object rather than committing a partial drag.
+      canvas.onpointercancel = () => {
+        if (drag?.original) objects[selected] = drag.original;
+        drag = null;
+        draft = null;
+        solve();
+      };
+      canvas.onpointerleave = () => {
+        if (!drag) {
+          probe = null;
+          draw();
+        }
+      };
+
+      // A polyline remains a draft until it has at least two vertices and is finished.
+      function finish() {
+        if (draft?.points?.length >= 2) {
+          save();
+          objects.push(draft);
+          selected = objects.length - 1;
+          draft = null;
+          setTool("select");
+          syncInspector();
+          solve();
+        }
+      }
+      $("finish").onclick = finish;
+
+      // Canvas-only shortcuts do not intercept Delete/Backspace while typing in inputs.
+      canvas.onkeydown = (e) => {
+        if (
+          editor &&
+          selected >= 0 &&
+          !draft &&
+          !drag &&
+          (e.key === "Delete" || e.key === "Backspace")
+        ) {
+          e.preventDefault();
+          $("delete").click();
+          return;
+        }
+        if (e.key === "Escape") {
+          if (drag?.original) objects[selected] = drag.original;
+          draft = null;
+          drag = null;
+          draw();
+          return;
+        }
+        if (e.key === "Enter" && editor) {
+          e.preventDefault();
+          if (tool === "polyline" && draft) {
+            finish();
+            return;
+          }
+          if (tool !== "select") {
+            save();
+            let o = newObject(tool, probe || [11, 8.5]);
+            if (o.points) o.points[1] = [o.points[0][0], Math.min(16.8, o.points[0][1] + 3)];
+            objects.push(o);
+            selected = objects.length - 1;
+            setTool("select");
+            syncInspector();
+            solve();
+            return;
+          }
+        }
+        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+          e.preventDefault();
+          probe = probe || [11, 8.5];
+          let step = e.shiftKey ? 1 : 0.1;
+          probe = [
+            Math.max(
+              0,
+              Math.min(
+                22,
+                probe[0] + (e.key === "ArrowRight" ? step : e.key === "ArrowLeft" ? -step : 0),
+              ),
+            ),
+            Math.max(
+              0,
+              Math.min(
+                17,
+                probe[1] + (e.key === "ArrowUp" ? step : e.key === "ArrowDown" ? -step : 0),
+              ),
+            ),
+          ];
+          updateProbe();
+          draw();
+        }
+      };
+      document.addEventListener("keydown", (e) => {
+        if (
+          editor &&
+          (e.ctrlKey || e.metaKey) &&
+          e.key === "z" &&
+          !["INPUT", "SELECT"].includes(document.activeElement.tagName)
+        ) {
+          e.preventDefault();
+          $("undo").click();
+        }
+      });
+
+      // === PNG export and startup ===
+      // Compose the map with a title and legend on a separate canvas, then download it.
+      // Everything is generated locally; no server or external image source is involved.
+      $("export").onclick = () => {
+        draw(true);
+        let out = document.createElement("canvas");
+        out.width = 1100;
+        out.height = 950;
+        let c = out.getContext("2d");
+        c.fillStyle = "#fbfaf4";
+        c.fillRect(0, 0, 1100, 950);
+        c.fillStyle = "#25382f";
+        c.font = "24px Georgia";
+        c.fillText($("title").textContent, 25, 36);
+        c.drawImage(canvas, 0, 60);
+        c.font = "13px system-ui";
+        c.fillText(
+          "Black: equipotentials (V)   ·   Orange: E, higher → lower potential   ·   22 × 17 cm   ·   Insulated outer edges",
+          25,
+          935,
+        );
+        let a = document.createElement("a");
+        a.download = "electric-field-map.png";
+        a.href = out.toDataURL("image/png");
+        a.click();
+        draw();
+      };
+
+      // Expose a small inspection API for the companion tests and developer console.
+      window.FieldMapper = {
+        Physics,
+        get model() {
+          return model;
+        },
+        get objects() {
+          return clone(objects);
+        },
+        load,
+        solve,
+      };
+      setTool("select");
+      load(0);
+    </script>
+  </body>
+</html>
